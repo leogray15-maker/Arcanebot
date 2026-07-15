@@ -3,9 +3,9 @@
 Backtest-first automated trading bot for **XAUUSD only**, broker **IC Markets**,
 built on an ICT session-liquidity-raid + market-structure-shift model.
 
-> **Status:** Phase 1 (data layer) complete and tested. Phases 2+ blocked on the
-> open questions below. **No live/demo execution** until the backtest is proven
-> and explicitly approved.
+> **Status:** Phases 1 (data) and 2 (structure engine) complete and tested
+> (32 unit tests). Phase 3 (signal engine) is next. **No live/demo execution**
+> until the backtest is proven and explicitly approved.
 
 ## Hard rules (enforced across the codebase)
 
@@ -26,7 +26,7 @@ built on an ICT session-liquidity-raid + market-structure-shift model.
 config.py                 # ALL tunable numbers live here (sweep without touching logic)
 arcanebot/
   data/                   # Phase 1 — load/validate CSV, resample M5->M15, gap detection  ✅
-  structure/              # Phase 2 — swings, liquidity, FVG/OB/VI                          ▢
+  structure/              # Phase 2 — swings, sessions, liquidity, FVG/OB/VI               ✅
   signals/                # Phase 3 — sweep -> MSS -> PD-array entry                        ▢
   backtest/               # Phase 4 — event-driven loop, spread/slippage, equity, risk     ▢
   reporting/              # Phase 6 — equity curve, per-session/R breakdowns                ▢
@@ -39,7 +39,7 @@ outputs/                  # backtest artefacts (git-ignored)
 ## Build sequence
 
 1. **Data layer** — load/validate CSVs, resample M5→M15, gap handling. ✅
-2. Structure engine — swing detection, liquidity, FVG/OB/VI.
+2. **Structure engine** — swing detection, session ranges, liquidity, FVG/OB/VI. ✅
 3. Signal engine — sweep → MSS → PD-array entry.
 4. Backtest loop — event-driven fills, spread/slippage, equity, daily loss cap.
 5. Look-ahead test.
