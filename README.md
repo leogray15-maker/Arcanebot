@@ -91,51 +91,42 @@ the sweep high → TP at sellside liquidity.
 
 ---
 
-## Open questions (need your call before Phase 2/3)
+## Decisions locked in (from the spec + your example trades)
 
-I've coded Phase 1 with sensible defaults in `config.py`, but these strategy
-details are genuinely ambiguous and change the results. My proposed default is in
-**bold** — tell me to keep it or override.
+- **Execution: M5 entry, M15 structure.** Liquidity levels and fractal structure
+  come from M15; the sweep → MSS → displacement → limit entry all evaluate on
+  closed **M5** candles.
+- **Liquidity = session ranges + fractal swings.** Track Asian/London/NY session
+  highs-lows and prior-day levels *and* M15 fractal swings (N=2); a sweep of
+  either can arm a setup.
+- **Take profit = opposing liquidity, with a fixed-2R shadow logged on every
+  trade** so the two exit styles can be compared on identical entries.
+- **Entries only in London (07:00–10:00) and NY-AM (12:00–15:00) UTC.** Asian is
+  liquidity-only (no entries).
 
-1. **Which timeframe defines the swept level and the TP liquidity?** The spec
-   says signals are on M5 but "use M15 to define HTF liquidity levels." Are the
-   swept sellside level and the TP buyside level **M15 swings**, while the MSS
-   short-term swing is an **M5 swing**? Or all M5? *Proposed: swept level + TP =
-   **M15** swings; MSS internal swing = **M5**.*
+## Remaining smaller defaults (coded; override anytime)
 
-2. **"Short-term swing high that formed during the down-move into the sweep."**
-   How do I bound the down-move and define that swing? *Proposed: the **most
-   recent M5 fractal swing high (N=2)** between the start of the leg down and the
-   sweep candle; MSS = first M5 body-close above it.*
+My proposed default is in **bold**; none of these block Phase 2.
 
-3. **Sweep re-entry window.** "Closes back above on the same or next candle."
-   *Proposed: sweep candle **itself or the next 1 candle** (`sweep_reentry_bars=1`).*
-   Widen it?
+1. **MSS internal swing.** The "short-term swing high in the down-move into the
+   sweep" = the **most recent M5 fractal high (N=2)** between the start of the
+   leg down and the sweep; MSS = first M5 body-close above it.
+2. **Sweep re-entry window.** Close back over the level within the sweep candle
+   **itself or the next 1 candle** (`sweep_reentry_bars=1`).
+3. **PD-array pick.** Filter to arrays in the **discount half** of sweep→MSS,
+   take the **deepest** (closest to sweep low), tie-break FVG > OB > VI.
+4. **Equal-level tolerance.** **15¢** (`equal_level_tolerance`).
+5. **New setups per window.** A new setup may form after one invalidates, as long
+   as no position is open (max 1 position).
 
-4. **PD-array selection when several exist.** Spec gives both a priority list
-   (FVG > OB > VI) and a "deepest in the discount half" rule and "whichever price
-   reaches first." These can conflict. *Proposed: filter to arrays in the
-   **discount half** of sweep→MSS, pick the **deepest** (closest to sweep low);
-   break ties by the FVG > OB > VI priority.* Which rule wins for you?
+## Still need your confirmation
 
-5. **Equal-highs/lows tolerance.** How close is "equal"? *Proposed: **15¢**
-   (`equal_level_tolerance`).*
+- **Gold pip/point convention (affects slippage & sizing).** Proposed: **1 pip =
+  10¢ (0.10), 1 point = 1¢**, so 20¢ spread = 2 pips, 1-pip slippage = 10¢.
+- **Asian session window.** Defaulted to **00:00–07:00 UTC** as a guess — what
+  exact hours does your "Asian" box use?
+- **Session DST.** Kill zones are **fixed UTC** (no seasonal shift) per spec —
+  confirming that's intended.
 
-6. **Gold pip/point convention (affects slippage & sizing).** *Proposed: **1 pip
-   = 10¢ (0.10), 1 point = 1¢ (0.01)**, so 20¢ spread = 2 pips and 1-pip
-   slippage = 10¢.* Confirm this matches your IC Markets feed.
-
-7. **Intrabar fill order.** With only OHLC, when a candle's range contains both
-   SL and TP, which fills? *Proposed: **assume SL first** (pessimistic) to avoid
-   flattering results.* Also: a limit entry fills only if price **trades through**
-   the level; fill at the level price then apply spread+slippage. OK?
-
-8. **One setup at a time.** Max 1 open position is clear — but if a setup
-   invalidates mid-kill-zone, may a **new** setup form in the same window?
-   *Proposed: **yes**, as long as no position is open.*
-
-9. **Session DST.** Kill zones are **fixed UTC** (no DST shift) per your spec —
-   confirming that's intended, since real London/NY times drift by an hour
-   seasonally.
-
-Answer whichever you have opinions on; I'll default the rest and note it.
+These don't block Phase 2 (structure engine); I'll proceed with the defaults and
+you can correct the three above whenever.

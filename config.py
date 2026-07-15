@@ -40,8 +40,12 @@ class DataConfig:
     # Timezone of incoming timestamps. Spec: UTC.
     timezone: str = "UTC"
     # Base (entry) timeframe and the higher timeframe derived from it.
-    base_timeframe: str = "5min"   # M5 — signals fire here
-    htf_timeframe: str = "15min"   # M15 — HTF liquidity levels
+    # DECIDED: entry logic (sweep -> MSS -> displacement -> limit) fires on
+    # closed M5 candles; liquidity levels + fractal structure come from M15.
+    base_timeframe: str = "5min"        # M5 — signals fire here (entry_timeframe)
+    htf_timeframe: str = "15min"        # M15 — HTF structure/liquidity
+    entry_timeframe: str = "5min"       # explicit alias used by the signal engine
+    structure_timeframe: str = "15min"  # explicit alias for liquidity/fractals
     # A gap larger than this many base bars (during an otherwise-continuous
     # trading stretch) is flagged for review. Weekends are expected and ignored.
     max_gap_bars: int = 3
@@ -61,6 +65,14 @@ class StructureConfig:
     equal_level_tolerance: float = 0.15   # 15 cents
     # Order block entry zone: "body" (open->close) or "range" (full high->low).
     ob_zone_mode: str = "body"
+    # DECIDED (from example trades): raided liquidity is BOTH session
+    # highs/lows (Asian/London/prior session) AND M15 fractal swings.
+    #   "session_and_fractal" | "fractal" | "session"
+    liquidity_source: str = "session_and_fractal"
+    track_session_levels: bool = True
+    track_fractal_levels: bool = True
+    # Also carry prior-day high/low as standing liquidity.
+    track_prior_day_levels: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -88,8 +100,15 @@ class SignalConfig:
 class SessionConfig:
     # (start_hour, start_min, end_hour, end_min) in UTC. Fixed UTC windows
     # (no DST shifting) per spec — configurable here.
+    # ENTRY kill zones:
     london: tuple = (7, 0, 10, 0)
     new_york_am: tuple = (12, 0, 15, 0)
+    # LIQUIDITY-ONLY session (no entries): Asian range whose high/low London
+    # tends to raid. Default window is a proposed guess — CONFIRM exact hours.
+    asian: tuple = (0, 0, 7, 0)
+    # Which sessions allow new entries vs. only contribute liquidity levels.
+    entry_sessions: tuple = ("london", "new_york_am")
+    liquidity_sessions: tuple = ("asian", "london", "new_york_am")
     # If True, an unfilled pending setup is cancelled when its kill zone ends.
     cancel_on_killzone_end: bool = True
 
@@ -105,9 +124,11 @@ class RiskConfig:
     daily_loss_limit_pct: float = 2.0    # stop trading for the day if hit
     # SL buffer beyond the sweep extreme.
     sl_buffer: float = 0.15              # 15 cents
-    # Take-profit mode: "liquidity" (opposing swing) or "fixed_r".
-    tp_mode: str = "liquidity"
+    # DECIDED: primary TP = opposing liquidity; on EVERY trade also record what
+    # a fixed-R exit would have returned, for side-by-side expectancy.
+    tp_mode: str = "liquidity"           # "liquidity" | "fixed_r"
     fixed_r_target: float = 2.0
+    always_log_fixed_r_shadow: bool = True
     # Move SL to breakeven once price reaches this many R (None disables).
     breakeven_at_r: float | None = None
 
