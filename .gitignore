@@ -1,0 +1,28 @@
+# Secrets / credentials — never commit
+.env
+*.env
+!.env.example
+
+# User-provided market data (large / private)
+data/*.csv
+data/**/*.csv
+!tests/fixtures/*.csv
+
+# Backtest outputs
+outputs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
