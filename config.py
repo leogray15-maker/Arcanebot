@@ -87,10 +87,17 @@ class SignalConfig:
     # A sweep must close back over the swept level within this many candles
     # (inclusive of the sweep candle itself).
     sweep_reentry_bars: int = 1
-    # PD-array selection priority order (first found wins among equals).
+    # PD-array selection priority order (tie-break among equal-depth arrays).
     pd_array_priority: tuple = ("FVG", "OB", "VI")
     # Prefer the deepest PD array within the discount half of sweep->MSS range.
     prefer_discount_half: bool = True
+    # How far back (M5 bars) a sweep may sit behind the MSS bar to still count.
+    sweep_lookback: int = 24
+    # Require a displacement candle in the sweep->MSS leg (anchors the FVG/OB).
+    require_displacement: bool = True
+    # Which edge of the chosen PD-array zone the limit sits at:
+    #   "proximal" (nearest to price, first touch), "mid", or "distal" (deepest).
+    entry_edge: str = "proximal"
 
 
 # --------------------------------------------------------------------------- #
@@ -129,6 +136,10 @@ class RiskConfig:
     tp_mode: str = "liquidity"           # "liquidity" | "fixed_r"
     fixed_r_target: float = 2.0
     always_log_fixed_r_shadow: bool = True
+    # A liquidity TP must sit at least this many R beyond entry, else we skip it
+    # and fall back to the fixed-R target. Stops the "nearest tiny swing" from
+    # becoming a sub-1R target smaller than the spread.
+    min_tp_r: float = 1.0
     # Move SL to breakeven once price reaches this many R (None disables).
     breakeven_at_r: float | None = None
 
