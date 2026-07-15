@@ -3,9 +3,11 @@
 Backtest-first automated trading bot for **XAUUSD only**, broker **IC Markets**,
 built on an ICT session-liquidity-raid + market-structure-shift model.
 
-> **Status:** Phases 1 (data) and 2 (structure engine) complete and tested
-> (32 unit tests). Phase 3 (signal engine) is next. **No live/demo execution**
-> until the backtest is proven and explicitly approved.
+> **Status:** All build phases (1–7) implemented and tested — **43 tests
+> passing**, including the look-ahead guard. The backtest runs end to end on M5
+> data and produces a trade log, summary stats, and plots. The MetaApi demo
+> adapter exists but is **hard-gated off**: no live/demo execution until you
+> review the backtest and explicitly approve.
 
 ## Hard rules (enforced across the codebase)
 
@@ -27,10 +29,12 @@ config.py                 # ALL tunable numbers live here (sweep without touchin
 arcanebot/
   data/                   # Phase 1 — load/validate CSV, resample M5->M15, gap detection  ✅
   structure/              # Phase 2 — swings, sessions, liquidity, FVG/OB/VI               ✅
-  signals/                # Phase 3 — sweep -> MSS -> PD-array entry                        ▢
-  backtest/               # Phase 4 — event-driven loop, spread/slippage, equity, risk     ▢
-  reporting/              # Phase 6 — equity curve, per-session/R breakdowns                ▢
+  signals/                # Phase 3 — sweep -> MSS -> PD-array entry state machine          ✅
+  backtest/               # Phase 4 — event-driven loop, broker, stats, CLI                 ✅
+  reporting/              # Phase 6 — equity curve, per-session/R breakdowns                ✅
   execution/base.py       # shared broker interface (backtest + live share signal code)    ✅
+  execution/metaapi_adapter.py  # Phase 7 — demo adapter, hard-gated off                    ✅
+scripts/generate_sample_data.py # synthetic M5 for an end-to-end dry run
 tests/                    # unit tests + fixtures
 data/                     # your CSVs (git-ignored)
 outputs/                  # backtest artefacts (git-ignored)
@@ -40,21 +44,44 @@ outputs/                  # backtest artefacts (git-ignored)
 
 1. **Data layer** — load/validate CSVs, resample M5→M15, gap handling. ✅
 2. **Structure engine** — swing detection, session ranges, liquidity, FVG/OB/VI. ✅
-3. Signal engine — sweep → MSS → PD-array entry.
-4. Backtest loop — event-driven fills, spread/slippage, equity, daily loss cap.
-5. Look-ahead test.
-6. Reporting.
-7. Live/demo execution (MetaApi) — only after backtest approval.
+3. **Signal engine** — sweep → MSS → PD-array entry. ✅
+4. **Backtest loop** — event-driven fills, spread/slippage, equity, daily loss cap. ✅
+5. **Look-ahead test** — truncation-invariance across the whole pipeline. ✅
+6. **Reporting** — equity curve, per-session, R distribution. ✅
+7. **Live/demo execution (MetaApi)** — implemented but gated off until approval. ✅
 
-## Setup
+## Setup & running
 
 ```bash
 pip install -r requirements.txt
-python -m pytest -q          # run the test suite
+python -m pytest -q                                   # run the 43-test suite
+
+# End-to-end dry run on SYNTHETIC data (not market data — pipeline check only):
+python scripts/generate_sample_data.py --days 20 --out data/sample_xauusd_m5.csv
+python -m arcanebot.backtest.run --m5 data/sample_xauusd_m5.csv --report
+
+# Real run once you drop in IC Markets CSVs:
+python -m arcanebot.backtest.run --m5 data/xauusd_m5.csv --m15 data/xauusd_m15.csv --report
 ```
 
 CSV format (per spec): columns `timestamp, open, high, low, close, volume`,
-timestamps UTC. Put M5 and M15 files under `data/` (git-ignored).
+timestamps UTC. If `--m15` is omitted it is resampled from the M5 file. Outputs
+land in `outputs/`: `trades.csv`, `decisions.log`, `summary.txt`, and PNG plots.
+
+## Honest caveats (read before trusting any number)
+
+- The included `data/sample_*.csv` is a **random walk**, not gold. Its results
+  are meaningless for edge — it exists only to prove the pipeline runs. Expect
+  ~0 or negative expectancy on it (a good sign: no fake edge). Judge the strategy
+  only on **real IC Markets data**.
+- The ICT rules were **codified into concrete, testable definitions** (MSS swing,
+  discount filter, PD-array tie-breaks). Reasonable people draw these lines
+  differently — every choice is a knob in `config.py`. Tune, don't rewrite.
+- Fills use OHLC only: limit fills when price trades through the level; when a
+  bar spans both SL and TP we assume **SL first** (pessimistic). Spread (20¢) and
+  slippage (1 pip) push every fill to the worse side.
+- **Skepticism rule:** the CLI flags any run with >2R expectancy — that usually
+  means a bug (look-ahead, unrealistic fills, or curve-fit), not a gold mine.
 
 ---
 
