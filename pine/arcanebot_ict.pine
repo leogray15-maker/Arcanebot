@@ -1,0 +1,160 @@
+//@version=5
+// ============================================================================
+// Arcanebot — XAUUSD ICT session-liquidity strategy (TradingView port)
+// ----------------------------------------------------------------------------
+// A faithful-as-Pine-allows port of the Python bot: kill zones -> liquidity
+// sweep -> Market Structure Shift (MSS) -> Fair Value Gap entry -> SL below the
+// sweep / TP at fixed-R or the opposing swing.
+//
+// NOT a 1:1 clone of the Python engine. Pine can't reproduce the multi-source
+// M15 liquidity pool or equal-level clustering, and TradingView's tester models
+// fills its own way. Treat this as a VISUAL + rough-backtest companion; the
+// Python backtest remains the source of truth for stats.
+//
+// Signals evaluate on CLOSED bars (no repainting): pivots confirm N bars later,
+// and entries use strategy limit orders. Apply on the M5 chart for XAUUSD.
+// ============================================================================
+strategy("Arcanebot ICT — XAUUSD", overlay=true, calc_on_every_tick=false,
+     pyramiding=0, initial_capital=10000, default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100, max_boxes_count=200, max_lines_count=200, max_labels_count=300)
+
+// ---------------------------------------------------------------- Inputs -----
+grpS = "Structure"
+swingN   = input.int(2, "Swing lookback N", minval=1, group=grpS)
+dispMult = input.float(1.5, "Displacement body x avg", step=0.1, group=grpS)
+dispLook = input.int(10, "Displacement avg lookback", group=grpS)
+
+grpK = "Kill zones (UTC)"
+useLondon = input.bool(true, "London", group=grpK)
+lonStart  = input.int(7,  "London start (h)", minval=0, maxval=23, group=grpK)
+lonEnd    = input.int(10, "London end (h)",   minval=0, maxval=23, group=grpK)
+useNY     = input.bool(true, "New York AM", group=grpK)
+nyStart   = input.int(12, "NY start (h)", minval=0, maxval=23, group=grpK)
+nyEnd     = input.int(15, "NY end (h)",   minval=0, maxval=23, group=grpK)
+
+grpR = "Risk / exits"
+slBuffer = input.float(0.15, "SL buffer ($)", step=0.05, group=grpR)
+tpMode   = input.string("Fixed R", "TP mode", options=["Fixed R", "Opposing swing"], group=grpR)
+rTarget  = input.float(2.0, "Fixed R target", step=0.5, group=grpR)
+cancelKZ = input.bool(true, "Cancel unfilled setup at kill-zone end", group=grpR)
+
+grpV = "Visuals"
+showKZ  = input.bool(true, "Shade kill zones", group=grpV)
+showFVG = input.bool(true, "Draw FVG entry zones", group=grpV)
+
+// ------------------------------------------------------------ Kill zones -----
+tmin = hour(time, "UTC") * 60 + minute(time, "UTC")
+inLon = useLondon and tmin >= lonStart * 60 and tmin < lonEnd * 60
+inNY  = useNY and tmin >= nyStart * 60 and tmin < nyEnd * 60
+inKZ  = inLon or inNY
+bgcolor(showKZ and inLon ? color.new(color.blue, 92) : na)
+bgcolor(showKZ and inNY  ? color.new(color.orange, 92) : na)
+
+// --------------------------------------------------------------- Pivots ------
+ph = ta.pivothigh(swingN, swingN)
+pl = ta.pivotlow(swingN, swingN)
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+// Displacement: a body >= dispMult * average body of the last dispLook bars.
+avgBody = ta.sma(math.abs(close - open), dispLook)
+bullDisp = (close - open) >= dispMult * avgBody
+bearDisp = (open - close) >= dispMult * avgBody
+
+// Bullish FVG on the last 3 candles: high[2] < low[0] -> gap [high[2], low[0]].
+bullFVG = high[2] < low[0]
+bullFVGtop = low[0]
+bullFVGbot = high[2]
+// Bearish FVG: low[2] > high[0] -> gap [high[0], low[2]].
+bearFVG = low[2] > high[0]
+bearFVGtop = low[2]
+bearFVGbot = high[0]
+
+// ============================================================ LONG setup =====
+// phase: 0 idle, 1 await MSS, 2 pending limit
+var int   lPhase = 0
+var float lSweepLow = na
+var float lMSS = na
+var float lEntry = na, lSL = na, lTP = na
+
+if lPhase == 0 and inKZ and not na(lastSwingLow) and not na(lastSwingHigh)
+    if low < lastSwingLow and close > lastSwingLow
+        lPhase := 1
+        lSweepLow := low
+        lMSS := lastSwingHigh
+        label.new(bar_index, low, "sweep", style=label.style_label_up,
+             color=color.new(color.teal, 20), textcolor=color.white, size=size.tiny)
+else if lPhase == 1
+    if close < lSweepLow or (cancelKZ and not inKZ)
+        lPhase := 0
+    else if close > lMSS and bullFVG and bullDisp
+        lEntry := bullFVGtop
+        lSL := lSweepLow - slBuffer
+        r = lEntry - lSL
+        if r > 0 and lEntry < close
+            lTP := tpMode == "Fixed R" ? lEntry + rTarget * r : (not na(lastSwingHigh) and lastSwingHigh > lEntry + r ? lastSwingHigh : lEntry + rTarget * r)
+            lPhase := 2
+            label.new(bar_index, high, "MSS", style=label.style_label_down,
+                 color=color.new(color.green, 20), textcolor=color.white, size=size.tiny)
+            if showFVG
+                box.new(bar_index[2], lEntry, bar_index, lSL, border_color=color.new(color.green, 40),
+                     bgcolor=color.new(color.green, 90))
+        else
+            lPhase := 0
+    else if close > lMSS
+        lPhase := 0
+
+if lPhase == 2
+    strategy.entry("Long", strategy.long, limit=lEntry)
+    strategy.exit("LongX", "Long", stop=lSL, limit=lTP)
+    if close < lSweepLow or (cancelKZ and not inKZ)
+        strategy.cancel("Long")
+        lPhase := 0
+if strategy.position_size > 0
+    lPhase := 0
+
+// ============================================================ SHORT setup ====
+var int   sPhase = 0
+var float sSweepHigh = na
+var float sMSS = na
+var float sEntry = na, sSL = na, sTP = na
+
+if sPhase == 0 and inKZ and not na(lastSwingHigh) and not na(lastSwingLow)
+    if high > lastSwingHigh and close < lastSwingHigh
+        sPhase := 1
+        sSweepHigh := high
+        sMSS := lastSwingLow
+        label.new(bar_index, high, "sweep", style=label.style_label_down,
+             color=color.new(color.maroon, 20), textcolor=color.white, size=size.tiny)
+else if sPhase == 1
+    if close > sSweepHigh or (cancelKZ and not inKZ)
+        sPhase := 0
+    else if close < sMSS and bearFVG and bearDisp
+        sEntry := bearFVGbot
+        sSL := sSweepHigh + slBuffer
+        r = sSL - sEntry
+        if r > 0 and sEntry > close
+            sTP := tpMode == "Fixed R" ? sEntry - rTarget * r : (not na(lastSwingLow) and lastSwingLow < sEntry - r ? lastSwingLow : sEntry - rTarget * r)
+            sPhase := 2
+            label.new(bar_index, low, "MSS", style=label.style_label_up,
+                 color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
+            if showFVG
+                box.new(bar_index[2], sSL, bar_index, sEntry, border_color=color.new(color.red, 40),
+                     bgcolor=color.new(color.red, 90))
+        else
+            sPhase := 0
+    else if close < sMSS
+        sPhase := 0
+
+if sPhase == 2
+    strategy.entry("Short", strategy.short, limit=sEntry)
+    strategy.exit("ShortX", "Short", stop=sSL, limit=sTP)
+    if close > sSweepHigh or (cancelKZ and not inKZ)
+        strategy.cancel("Short")
+        sPhase := 0
+if strategy.position_size < 0
+    sPhase := 0
