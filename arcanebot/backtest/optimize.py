@@ -111,14 +111,16 @@ def walk_forward(m5: pd.DataFrame, grid: dict, base_cfg: Config = DEFAULT_CONFIG
     return pd.DataFrame(records), oos_summary
 
 
-# Default grid — a sane starting search space (edit freely).
+# Default grid — a sane starting search space including the profitability
+# levers (HTF trend filter, breakeven, partial TP). Edit freely; every extra
+# dimension multiplies runtime, so trim before a heavy walk-forward.
 DEFAULT_GRID = {
     "structure.swing_n": [2, 3],
-    "risk.sl_buffer": [0.10, 0.20],
     "risk.tp_mode": ["liquidity", "fixed_r"],
     "risk.fixed_r_target": [2.0, 3.0],
-    "signal.displacement_body_mult": [1.3, 1.7],
+    "signal.htf_trend_filter": [False, True],
     "risk.breakeven_at_r": [None, 1.0],
+    "risk.partial_tp_r": [None, 2.0],
 }
 
 

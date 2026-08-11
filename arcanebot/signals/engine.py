@@ -25,8 +25,10 @@ from dataclasses import dataclass, replace
 
 import pandas as pd
 
+import numpy as np
+
 from config import Config, DEFAULT_CONFIG
-from arcanebot.data.loader import bar_close_time
+from arcanebot.data.loader import bar_close_time, resample
 from arcanebot.execution.base import OrderRequest, OrderType, Side
 from arcanebot.structure.liquidity import (
     LiquidityLevel,
@@ -115,6 +117,20 @@ class SignalEngine:
         self.levels = build_liquidity(m15_swings, session_ranges, day_ranges, self.cfg.structure)
         self._known_levels: list[LiquidityLevel] = []
 
+        # LEVER — HTF trend bias, computed once and consumed causally by close
+        # time. Each HTF bar's EMA is only "known" once that bar has closed.
+        self._htf_close_times = None
+        self._htf_bias = None
+        if self.cfg.signal.htf_trend_filter:
+            tf = self.cfg.signal.htf_trend_timeframe
+            htf_df = resample(m5, tf, self.cfg.data)
+            ema = htf_df["close"].ewm(span=self.cfg.signal.htf_trend_ema, adjust=False).mean()
+            bias = (htf_df["close"] > ema).map(lambda up: 1 if up else -1)
+            dur = pd.Timedelta(tf)
+            # Store tz-naive UTC datetime64 so searchsorted compares cleanly.
+            self._htf_close_times = (htf_df.index + dur).tz_localize(None).to_numpy()
+            self._htf_bias = bias.to_numpy()
+
     # ------------------------------------------------------------------ #
     # Per-bar evaluation
     # ------------------------------------------------------------------ #
@@ -162,10 +178,33 @@ class SignalEngine:
     # ------------------------------------------------------------------ #
     # Internal: start a setup on a fresh sweep completing at bar i
     # ------------------------------------------------------------------ #
+    def _in_blackout(self, t_close: pd.Timestamp) -> bool:
+        t = t_close.time()
+        for sh, sm, eh, em in self.cfg.session.blackout_windows:
+            from datetime import time as _time
+            if _time(sh, sm) <= t < _time(eh, em):
+                return True
+        return False
+
+    def _trend_allows(self, side: Side, t_close: pd.Timestamp) -> bool:
+        """HTF trend gate. True when the filter is off or the bias agrees."""
+        if not self.cfg.signal.htf_trend_filter or self._htf_bias is None:
+            return True
+        key = t_close.tz_localize(None).to_datetime64()
+        idx = int(np.searchsorted(self._htf_close_times, key, side="right")) - 1
+        if idx < 0:
+            return False  # no closed HTF bar yet -> no bias, stay out
+        bias = self._htf_bias[idx]
+        return bool(bias > 0) if side is Side.LONG else bool(bias < 0)
+
     def _try_start_setup(self, i: int, t_close: pd.Timestamp, dec: Decision) -> None:
+        if self._in_blackout(t_close):
+            return
         known = self._known_levels
         # Try long (sweep of sellside) then short (sweep of buyside).
         for side in (Side.LONG, Side.SHORT):
+            if not self._trend_allows(side, t_close):
+                continue
             setup = self._detect_sweep(i, side, known, t_close)
             if setup is not None:
                 self.active = setup

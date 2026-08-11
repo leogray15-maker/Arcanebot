@@ -189,6 +189,17 @@ class BacktestBroker(ExecutionBackend):
             "be_trigger": be_trigger,
             "be_done": False,
         }
+
+        # Partial-TP lever.
+        ptp_r = self.cfg.risk.partial_tp_r
+        if ptp_r is not None:
+            self._pos_extra["partial_trigger"] = (fill_price + ptp_r * stop_dist) \
+                if o.side is Side.LONG else (fill_price - ptp_r * stop_dist)
+        else:
+            self._pos_extra["partial_trigger"] = None
+        self._pos_extra["partial_done"] = False
+        self._pos_extra["remaining_lots"] = lots
+        self._pos_extra["realized_partial"] = 0.0
         self._pending = None
 
     def _round_lots(self, lots: float) -> float:
@@ -220,7 +231,16 @@ class BacktestBroker(ExecutionBackend):
             self._close(exit_market, reason, t)
             return True
 
-        # Not exited — arm breakeven for subsequent bars if the trigger printed.
+        # Partial take-profit: on a bar that reaches the partial level WITHOUT
+        # first hitting the stop, bank part of the position and (optionally) move
+        # the runner's stop to breakeven. Pessimistic: SL was checked first above.
+        ptp = self._pos_extra["partial_trigger"]
+        if ptp is not None and not self._pos_extra["partial_done"]:
+            reached = high >= ptp if p.side is Side.LONG else low <= ptp
+            if reached:
+                self._take_partial(ptp, t)
+
+        # Arm breakeven for subsequent bars if the trigger printed.
         be = self._pos_extra["be_trigger"]
         if be is not None and not self._pos_extra["be_done"]:
             reached = high >= be if p.side is Side.LONG else low <= be
@@ -229,16 +249,36 @@ class BacktestBroker(ExecutionBackend):
                 self._pos_extra["be_done"] = True
         return False
 
+    def _take_partial(self, level_market: float, t: pd.Timestamp) -> None:
+        p = self._position
+        part_lots = p.lots * self.cfg.risk.partial_tp_frac
+        if p.side is Side.LONG:
+            level_eff = level_market - self.half_spread - self.slip
+            pnl = (level_eff - p.entry_price) * part_lots * self._upl()
+        else:
+            level_eff = level_market + self.half_spread + self.slip
+            pnl = (p.entry_price - level_eff) * part_lots * self._upl()
+        self._equity += pnl
+        self._pos_extra["realized_partial"] += pnl
+        self._pos_extra["remaining_lots"] -= part_lots
+        self._pos_extra["partial_done"] = True
+        if self.cfg.risk.partial_move_be:
+            self._pos_extra["stop"] = p.entry_price
+            self._pos_extra["be_done"] = True
+
     def _close(self, exit_market: float, reason: str, t: pd.Timestamp) -> None:
         p = self._position
+        rem_lots = self._pos_extra.get("remaining_lots", p.lots)
         if p.side is Side.LONG:
             exit_eff = exit_market - self.half_spread - self.slip
-            pnl = (exit_eff - p.entry_price) * p.lots * self._upl()
+            runner_pnl = (exit_eff - p.entry_price) * rem_lots * self._upl()
         else:
             exit_eff = exit_market + self.half_spread + self.slip
-            pnl = (p.entry_price - exit_eff) * p.lots * self._upl()
+            runner_pnl = (p.entry_price - exit_eff) * rem_lots * self._upl()
 
-        self._equity += pnl
+        partial_taken = self._pos_extra.get("partial_done", False)
+        pnl = runner_pnl + self._pos_extra.get("realized_partial", 0.0)
+        self._equity += runner_pnl   # partial pnl already added when banked
         risk_usd = self._pos_extra["risk_usd"]
         r_mult = pnl / risk_usd if risk_usd else 0.0
 
@@ -247,7 +287,8 @@ class BacktestBroker(ExecutionBackend):
             entry_index=self._pos_extra["entry_index"], entry_price=p.entry_price,
             exit_time=t, exit_price=exit_eff, lots=p.lots, stop_loss=p.stop_loss,
             take_profit=p.take_profit, risk_usd=risk_usd, pnl=pnl, r_multiple=r_mult,
-            exit_reason=reason, session=_session_of(p.reason), reason=p.reason,
+            exit_reason=(reason + "+P") if partial_taken else reason,
+            session=_session_of(p.reason), reason=p.reason,
         ))
         self._position = None
         self._pos_extra = {}

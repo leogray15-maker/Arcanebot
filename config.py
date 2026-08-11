@@ -100,6 +100,11 @@ class SignalConfig:
     # Which edge of the chosen PD-array zone the limit sits at:
     #   "proximal" (nearest to price, first touch), "mid", or "distal" (deepest).
     entry_edge: str = "proximal"
+    # LEVER — higher-timeframe trend filter: only take longs when the last
+    # closed HTF bar is above its EMA, shorts when below. Off by default.
+    htf_trend_filter: bool = False
+    htf_trend_timeframe: str = "60min"
+    htf_trend_ema: int = 50
 
 
 # --------------------------------------------------------------------------- #
@@ -120,6 +125,9 @@ class SessionConfig:
     liquidity_sessions: tuple = ("asian", "london", "new_york_am")
     # If True, an unfilled pending setup is cancelled when its kill zone ends.
     cancel_on_killzone_end: bool = True
+    # LEVER — news/time blackout: skip NEW entries whose bar-close time falls in
+    # any (start_h, start_m, end_h, end_m) UTC window. Default: none.
+    blackout_windows: tuple = ()
 
 
 # --------------------------------------------------------------------------- #
@@ -144,6 +152,11 @@ class RiskConfig:
     min_tp_r: float = 1.0
     # Move SL to breakeven once price reaches this many R (None disables).
     breakeven_at_r: float | None = None
+    # LEVER — partial take-profit: at partial_tp_r, close partial_tp_frac of the
+    # position and (optionally) move the runner's stop to breakeven. None = off.
+    partial_tp_r: float | None = None
+    partial_tp_frac: float = 0.5
+    partial_move_be: bool = True
 
 
 @dataclass(frozen=True)
