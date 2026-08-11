@@ -83,6 +83,26 @@ land in `outputs/`: `trades.csv`, `decisions.log`, `summary.txt`, and PNG plots.
 - **Skepticism rule:** the CLI flags any run with >2R expectancy — that usually
   means a bug (look-ahead, unrealistic fills, or curve-fit), not a gold mine.
 
+## Optimising (only on REAL data — never on the synthetic sample)
+
+Tuning parameters against random/synthetic candles fits noise and generalises to
+nothing. Optimise only once real IC Markets data is in, and judge on
+out-of-sample results:
+
+```bash
+# in-sample grid search (fast, but OVERFITS — for exploration only):
+python -m arcanebot.backtest.optimize --m5 data/xauusd_m5.csv --mode sweep
+
+# walk-forward: tune on the past, score on unseen slices (the honest number):
+python -m arcanebot.backtest.optimize --m5 data/xauusd_m5.csv --mode walk --folds 5
+```
+
+The grid lives in `arcanebot/backtest/optimize.py` (`DEFAULT_GRID`) and sweeps
+swing N, SL buffer, TP mode, R target, displacement multiple, and the
+**breakeven-at-R** stop lever (`risk.breakeven_at_r`). Win rate is a byproduct —
+the optimiser ranks by **expectancy**, because a high win rate with a tiny TP is
+still a losing bot. If out-of-sample expectancy ≤ 0, there's no edge to trade.
+
 ---
 
 ## My understanding of the long setup (restated)

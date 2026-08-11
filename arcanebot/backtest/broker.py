@@ -170,11 +170,24 @@ class BacktestBroker(ExecutionBackend):
             side=o.side, entry_price=fill_price, stop_loss=o.stop_loss,
             take_profit=o.take_profit, lots=lots, opened_at=t, reason=o.reason,
         )
+        # Breakeven lever: after price runs breakeven_at_r in our favour we move
+        # the working stop to entry. Computed here; applied on the bar AFTER the
+        # trigger (pessimistic — no intrabar "was I at BE or SL first?" guess).
+        be_r = self.cfg.risk.breakeven_at_r
+        if be_r is not None:
+            be_trigger = (fill_price + be_r * stop_dist) if o.side is Side.LONG \
+                else (fill_price - be_r * stop_dist)
+        else:
+            be_trigger = None
+
         self._pos_extra = {
             "entry_index": i,
             "risk_usd": stop_dist * lots * self._upl(),
             "stop_dist": stop_dist,
             "created": o,
+            "stop": o.stop_loss,        # mutable working stop (market level)
+            "be_trigger": be_trigger,
+            "be_done": False,
         }
         self._pending = None
 
@@ -186,7 +199,8 @@ class BacktestBroker(ExecutionBackend):
     def _resolve_position(self, bar, t: pd.Timestamp) -> bool:
         p = self._position
         low, high = float(bar["low"]), float(bar["high"])
-        hit_sl = low <= p.stop_loss if p.side is Side.LONG else high >= p.stop_loss
+        stop = self._pos_extra["stop"]      # working stop (may be at breakeven)
+        hit_sl = low <= stop if p.side is Side.LONG else high >= stop
         hit_tp = high >= p.take_profit if p.side is Side.LONG else low <= p.take_profit
 
         exit_market = None
@@ -194,19 +208,26 @@ class BacktestBroker(ExecutionBackend):
         if hit_sl and hit_tp:
             # Pessimistic: assume the stop went first.
             if self.cfg.costs.pessimistic_intrabar_fills:
-                exit_market, reason = p.stop_loss, "SL"
+                exit_market, reason = stop, "SL"
             else:
                 exit_market, reason = p.take_profit, "TP"
         elif hit_sl:
-            exit_market, reason = p.stop_loss, "SL"
+            exit_market, reason = stop, "SL"
         elif hit_tp:
             exit_market, reason = p.take_profit, "TP"
 
-        if exit_market is None:
-            return False
+        if exit_market is not None:
+            self._close(exit_market, reason, t)
+            return True
 
-        self._close(exit_market, reason, t)
-        return True
+        # Not exited — arm breakeven for subsequent bars if the trigger printed.
+        be = self._pos_extra["be_trigger"]
+        if be is not None and not self._pos_extra["be_done"]:
+            reached = high >= be if p.side is Side.LONG else low <= be
+            if reached:
+                self._pos_extra["stop"] = p.entry_price   # move stop to entry
+                self._pos_extra["be_done"] = True
+        return False
 
     def _close(self, exit_market: float, reason: str, t: pd.Timestamp) -> None:
         p = self._position
