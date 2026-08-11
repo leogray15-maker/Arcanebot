@@ -11,6 +11,8 @@ Units note for XAUUSD (gold):
   - This pip/point convention is a proposed default (see README "Open questions").
 """
 
+from __future__ import annotations  # allow `float | None` on Python 3.9
+
 from dataclasses import dataclass, field
 
 

@@ -12,6 +12,7 @@ loader's expected schema.
 from __future__ import annotations
 
 import argparse
+import os
 
 import numpy as np
 import pandas as pd
@@ -64,6 +65,9 @@ def main() -> None:
     ap.add_argument("--out", default="data/sample_xauusd_m5.csv")
     args = ap.parse_args()
 
+    out_dir = os.path.dirname(args.out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     df = generate(args.days, args.start, args.seed, args.base_price)
     df.to_csv(args.out, index=False)
     print(f"Wrote {len(df)} M5 bars -> {args.out}")
