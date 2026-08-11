@@ -79,9 +79,11 @@ bearFVGbot = high[0]
 var int   lPhase = 0
 var float lSweepLow = na
 var float lMSS = na
-var float lEntry = na, lSL = na, lTP = na
+var float lEntry = na
+var float lSL = na
+var float lTP = na
 
-if lPhase == 0 and inKZ and not na(lastSwingLow) and not na(lastSwingHigh)
+if lPhase == 0 and inKZ and strategy.position_size == 0 and not na(lastSwingLow) and not na(lastSwingHigh)
     if low < lastSwingLow and close > lastSwingLow
         lPhase := 1
         lSweepLow := low
@@ -108,7 +110,7 @@ else if lPhase == 1
     else if close > lMSS
         lPhase := 0
 
-if lPhase == 2
+if lPhase == 2 and strategy.position_size == 0
     strategy.entry("Long", strategy.long, limit=lEntry)
     strategy.exit("LongX", "Long", stop=lSL, limit=lTP)
     if close < lSweepLow or (cancelKZ and not inKZ)
@@ -121,9 +123,11 @@ if strategy.position_size > 0
 var int   sPhase = 0
 var float sSweepHigh = na
 var float sMSS = na
-var float sEntry = na, sSL = na, sTP = na
+var float sEntry = na
+var float sSL = na
+var float sTP = na
 
-if sPhase == 0 and inKZ and not na(lastSwingHigh) and not na(lastSwingLow)
+if sPhase == 0 and inKZ and strategy.position_size == 0 and not na(lastSwingHigh) and not na(lastSwingLow)
     if high > lastSwingHigh and close < lastSwingHigh
         sPhase := 1
         sSweepHigh := high
@@ -150,7 +154,7 @@ else if sPhase == 1
     else if close < sMSS
         sPhase := 0
 
-if sPhase == 2
+if sPhase == 2 and strategy.position_size == 0
     strategy.entry("Short", strategy.short, limit=sEntry)
     strategy.exit("ShortX", "Short", stop=sSL, limit=sTP)
     if close > sSweepHigh or (cancelKZ and not inKZ)
